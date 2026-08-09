@@ -7,8 +7,10 @@ Shader "Custom/GradientSkybox"
         _Exponent ("Blend Exponent", Range(0.1, 5)) = 1.0
         _SunDir ("Sun Direction", Vector) = (0, 1, 0, 0)
         _SunColor ("Sun Glow Color", Color) = (1, 0.9, 0.7, 1)
-        _SunGlowSize ("Sun Glow Size", Range(0.01, 0.5)) = 0.15
-        _SunGlowIntensity ("Sun Glow Intensity", Range(0, 5)) = 2.0
+        _SunGlowIntensity ("Sun Glow Intensity", Range(0, 5)) = 1.0
+        _SunDiscSize ("Sun Disc Size", Range(0.9, 1.0)) = 0.999
+        _SunHaloPower ("Sun Halo Power", Range(1.0, 128.0)) = 16.0
+        _SunHaloIntensity ("Sun Halo Intensity", Range(0.0, 5.0)) = 1.5
     }
     SubShader
     {
@@ -26,8 +28,10 @@ Shader "Custom/GradientSkybox"
             half _Exponent;
             half4 _SunDir;
             half4 _SunColor;
-            half _SunGlowSize;
             half _SunGlowIntensity;
+            half _SunDiscSize;
+            half _SunHaloPower;
+            half _SunHaloIntensity;
             
             // === GLOBAL SHADER VARIABLES (Từ DayNightCycle.cs, mô phỏng COBBLEVERSE) ===
             float _SunVisibility;
@@ -101,12 +105,10 @@ Shader "Custom/GradientSkybox"
                 groundFade = groundFade * groundFade * (3.0 - 2.0 * groundFade); // smoothstep
                 skyColor *= groundFade;
                 
-                // === 4. SUN GLARE (Từ COBBLEVERSE sky.glsl L62-97) ===
-                // Mô phỏng tán xạ ánh sáng của COBBLEVERSE — mượt và tự nhiên hơn pow đơn giản
+                // === 4. SUN GLARE & SUN DISC ===
                 float sunDot = saturate(dot(viewDir, -sunDirection));
                 
-                // Glare scatter: intensity thay đổi theo khoảng cách tới mặt trời
-                // COBBLEVERSE: glareScatter = 3.0 * (2.0 - clamp01(VdotS * 1000))
+                // Vầng sáng bao quanh (Glare / Atmospheric scattering)
                 float VdotSML = _SunVisibility > 0.5 ? VdotS : -VdotS;
                 
                 if (VdotSML > 0.0)
@@ -114,34 +116,31 @@ Shader "Custom/GradientSkybox"
                     float glareScatter = 3.0 * (2.0 - saturate(VdotS * 1000.0));
                     float VdotSM4 = pow(abs(VdotS), glareScatter);
                     
-                    // COBBLEVERSE glare formula (L72-73)
                     float visfactor = 0.075;
-                    float glare = visfactor / (1.0 - (1.0 - visfactor) * VdotSM4) - visfactor;
+                    float glare = visfactor / (max(1.0 - (1.0 - visfactor) * VdotSM4, 0.001)) - visfactor;
                     glare *= 0.25;
                     
-                    // Glare color: blue-ish at night, warm orange at day (L76)
                     half3 glareColor = lerp(half3(0.38, 0.4, 0.5) * 0.3, 
                                             half3(1.5, 0.7, 0.3) + half3(0.0, 0.5, 0.5) * _NoonFactor, 
                                             _SunVisibility);
                     
-                    // Giảm glare khi mưa (L85)
                     glare *= (1.0 - 0.8 * _RainFactor);
+                    glare *= lerp(1.0, 1.0, _SunVisibility);
                     
-                    // SUN_GLARE_AMOUNT = 10 (COBBLEVERSE L4), MOON_GLARE_AMOUNT = 10
-                    glare *= lerp(1.0, 1.0, _SunVisibility); // Cả 2 = 10 * 0.1 = 1.0
-                    
-                    skyColor.rgb += glare * _ShadowTime * glareColor;
+                    skyColor.rgb += glare * _ShadowTime * glareColor * 0.5; // Giảm nhẹ glare chung
                 }
                 
-                // Vầng sáng tập trung (core glow) — giảm bớt để nhìn rõ mặt trời
-                float coreGlow = pow(sunDot, 1.0 / max(_SunGlowSize, 0.001));
-                coreGlow *= _SunGlowIntensity;
+                // --- Sun Disc & Halo Điện Ảnh ---
+                // Sun Disc: Viền sắc nét hơn nhưng dùng smoothstep để không bị răng cưa
+                float disc = smoothstep(_SunDiscSize * 0.995, _SunDiscSize, sunDot);
                 
-                // Halo mềm bao quanh — giảm mạnh để không che mặt trời
-                float halo = pow(sunDot, 5.0);
-                halo *= _SunGlowIntensity * 0.1;
+                // Halo: Tỏa mềm ra xung quanh
+                float halo = pow(sunDot, _SunHaloPower) * _SunHaloIntensity;
                 
-                skyColor.rgb += _SunColor.rgb * (coreGlow + halo);
+                // Giảm cường độ khi mặt trời lặn (tùy thuộc vào SdotU)
+                float sunFade = smoothstep(-0.05, 0.1, _SunFactor); 
+                
+                skyColor.rgb += _SunColor.rgb * (disc + halo) * _SunGlowIntensity * sunFade;
                 
                 // === 5. DITHER CHỐNG BANDING (Từ COBBLEVERSE sky.glsl L107) ===
                 // finalSky += (dither - 0.5) / 128.0

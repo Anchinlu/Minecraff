@@ -58,8 +58,8 @@ public class SunManager : MonoBehaviour
             // Pha 70% màu nắng + 30% màu chân trời → mặt trời đổi sắc theo bầu trời
             Color blended = Color.Lerp(baseColor, skyTint, 0.3f);
             
-            // Đẩy lên Neon HDR: nhân hệ số > 1 để phát sáng chói lòa vượt giới hạn màn hình
-            float neonBoost = 2.5f;
+            // Đẩy lên Neon HDR: giảm neonBoost để không bị chói (cinematic look)
+            float neonBoost = 1.2f;
             Color neonColor = new Color(
                 blended.r * neonBoost,
                 blended.g * neonBoost,

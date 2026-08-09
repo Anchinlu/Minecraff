@@ -62,8 +62,8 @@ public class CloudManager : MonoBehaviour
     {
         float n = 0f;
         float amplitude = 1f;
-        // Tăng frequency nhẹ lên 0.03 để các cụm mây không bị bành trướng quá to
-        float frequency = 0.03f;
+        // Giảm frequency xuống 0.015 để các cụm mây to hơn, tự nhiên hơn
+        float frequency = 0.015f;
         float maxValue = 0f;
 
         for (int octave = 0; octave < 3; octave++)
@@ -85,11 +85,11 @@ public class CloudManager : MonoBehaviour
         float density = CloudNoise(x, z, tOffset);
         
         // Trừ bớt density khi lên cao để mây tạo hình vòm/búp trên đỉnh
-        float heightFalloff = y * 0.1f; 
+        float heightFalloff = y * 0.12f; 
         float finalDensity = density - heightFalloff;
         
-        // Nâng threshold lên 0.5f để mây không thành 1 tảng khổng lồ mà tách thành nhiều cụm liên kết
-        return finalDensity > 0.5f;
+        // Nâng threshold lên 0.55f để mây tách thành nhiều cụm thưa hơn
+        return finalDensity > 0.55f;
     }
 
     void RegenerateCloudMesh()

@@ -92,48 +92,59 @@ public class TerrainGenerator
     ///   - Perlin trả 0.5 → height = 32 (trung bình)
     ///   - Perlin trả 1.0 → height = 45 (đỉnh đồi)
     /// </summary>
-    public int GetHeight(int worldX, int worldZ)
+    public float GetUncarvedHeight(float x, float z)
     {
-        // 1. Noise Lục địa (Biome Noise) - Phóng to bản đồ để tạo các vùng (Vùng đồng bằng vs Vùng đồi núi)
-        float biomeScale = 100f; // Tần số rất thấp để tạo mảng lớn
-        float biomeNoise = Mathf.PerlinNoise((worldX + seed) / biomeScale, (worldZ + seed) / biomeScale);
+        float biomeScale = 100f;
+        float biomeNoise = Mathf.PerlinNoise((x + seed) / biomeScale, (z + seed) / biomeScale);
         
         float heightMultiplier = 0f;
         float baseElevation = 0f;
         
-        // 2. Chia vùng địa hình
         if (biomeNoise < 0.4f)
         {
-            // Đồng bằng (Plains): Thấp và rất phẳng
             heightMultiplier = 0.15f; 
             baseElevation = 0f;
         }
         else if (biomeNoise < 0.6f)
         {
-            // Vùng chuyển tiếp (Transition): Cong mượt (SmoothStep) từ đồng bằng lên đồi núi
             float t = (biomeNoise - 0.4f) / 0.2f; 
-            t = t * t * (3f - 2f * t); // SmoothStep
+            t = t * t * (3f - 2f * t);
             heightMultiplier = Mathf.Lerp(0.15f, 1.2f, t);
-            baseElevation = Mathf.Lerp(0f, 8f, t); // Đồi được đôn cao nền lên 8 block
+            baseElevation = Mathf.Lerp(0f, 8f, t);
         }
         else
         {
-            // Đồi núi (Hills): Cao và nhấp nhô mạnh
             heightMultiplier = 1.2f;
             baseElevation = 8f;
         }
         
-        // 3. Noise Chi tiết (Detail Noise) - Tạo độ nhấp nhô cục bộ trên bề mặt
         float detailScale = 25f;
-        float detailNoise = Mathf.PerlinNoise((worldX + seed) / detailScale, (worldZ + seed) / detailScale);
+        float detailNoise = Mathf.PerlinNoise((x + seed) / detailScale, (z + detailScale) / detailScale);
         
-        // 4. Tổng hợp
-        float finalHeight = baseHeight + baseElevation + (detailNoise * maxHeight * heightMultiplier);
+        return baseHeight + baseElevation + (detailNoise * maxHeight * heightMultiplier);
+    }
+
+    public int GetHeight(int worldX, int worldZ)
+    {
+        float finalHeight = GetUncarvedHeight(worldX, worldZ);
         int terrainHeight = Mathf.FloorToInt(finalHeight);
         
         CarveRiver(worldX, worldZ, ref terrainHeight);
         
         return terrainHeight;
+    }
+
+
+    public bool IsRiver(float x, float z)
+    {
+        float presenceMask = GetRiverPresenceMask(x, z);
+        if (presenceMask <= 0f) return false;
+
+        float riverDist = GetRiverMask(x, z);
+        float widthFactor = Mathf.Pow(presenceMask, riverWidthRarityExponent);
+        float actualRiverWidth = riverWidth * Mathf.Lerp(0.4f, 1.5f, widthFactor);
+
+        return riverDist < actualRiverWidth;
     }
 
     public float GetWaterTableHeight(float x, float z)
@@ -142,18 +153,34 @@ public class TerrainGenerator
         float regionNoise = Mathf.PerlinNoise(x * lakeRegionNoiseScale, z * lakeRegionNoiseScale);
         float lakeMask = Mathf.Clamp01((regionNoise - lakeRegionThreshold) / (1f - lakeRegionThreshold));
 
-        if (lakeMask <= 0f)
+        bool hasRiver = IsRiver(x, z);
+
+        if (lakeMask <= 0f && !hasRiver)
         {
-            // Vùng KHÔNG được phép có hồ — trả về giá trị cực thấp, không bao giờ giao với terrain thật
+            // Vùng KHÔNG được phép có hồ và không có sông — trả về giá trị cực thấp
             return -1000f;
         }
 
-        // BƯỚC 2: Trong vùng được phép, tính kích thước — dùng Pow() để bias về phía nhỏ
-        float sizeNoise = Mathf.PerlinNoise(x * waterTableNoiseScale, z * waterTableNoiseScale);
-        float biasedSize = Mathf.Pow(sizeNoise, lakeSizeRarityExponent); // mũ cao → phần lớn kết quả nhỏ, hiếm khi gần 1 (to)
+        float finalWaterTable = -1000f;
 
-        // Nhân thêm lakeMask để hồ ở rìa vùng mask (lakeMask gần 0) nhỏ dần, mượt mà không cắt cụt đột ngột
-        return baseWaterTableY + biasedSize * waterTableVariance * lakeMask;
+        // Nếu là sông, nước ngang bằng bờ sông (thấp hơn 1 chút để không tràn)
+        if (hasRiver)
+        {
+            finalWaterTable = GetUncarvedHeight(x, z) - 1f; 
+        }
+
+        // Nếu là hồ, dùng baseWaterTableY cộng thêm variance
+        if (lakeMask > 0f)
+        {
+            float sizeNoise = Mathf.PerlinNoise(x * waterTableNoiseScale, z * waterTableNoiseScale);
+            float biasedSize = Mathf.Pow(sizeNoise, lakeSizeRarityExponent);
+            float lakeHeight = baseWaterTableY + biasedSize * waterTableVariance * lakeMask;
+            
+            // Nếu vùng này vừa có sông vừa có hồ, lấy mức cao nhất (sông đổ vào hồ)
+            finalWaterTable = Mathf.Max(finalWaterTable, lakeHeight);
+        }
+
+        return finalWaterTable;
     }
 
     public float GetRiverMask(float x, float z)

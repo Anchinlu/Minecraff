@@ -25,6 +25,9 @@ public class GameSetup : MonoBehaviour
         SpawnPlayer();
         SetupEnvironment();
         CreateCrosshairUI();
+        
+        // Công cụ Tắt/Bật nhanh Shader
+        gameObject.AddComponent<ShaderToggler>();
     }
     
     private void Update()
@@ -71,16 +74,8 @@ public class GameSetup : MonoBehaviour
         timeCycle.sunLight = sunLight;
         timeCycle.skyMaterial = skyMat;
         
-        // Đám mây giống hệt block cỏ (Lit) nhưng Mờ Mờ sương mù (Transparent)
-        Material cloudMat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-        cloudMat.color = new Color(1f, 1f, 1f, 0.5f); // Trắng trong suốt (Alpha = 0.5)
-        
-        // Bật tính năng trong suốt cho URP Lit
-        cloudMat.SetFloat("_Surface", 1); 
-        cloudMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-        cloudMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        cloudMat.SetInt("_ZWrite", 1); // RẤT QUAN TRỌNG: Giữ ZWrite = 1 để không bị lỗi 2D đè mặt nhau
-        cloudMat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        // Đám mây dùng Shader tùy chỉnh (Opaque, có Directional Shading + Cinematic Fog)
+        Material cloudMat = new Material(Shader.Find("Custom/CloudShader"));
         
         CloudManager cloudMgr = envObj.AddComponent<CloudManager>();
         GrassBladeManager grassMgr = envObj.AddComponent<GrassBladeManager>();

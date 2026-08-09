@@ -23,6 +23,11 @@ Shader "Custom/VoxelVertexColor"
 
             // === GLOBAL SHADER VARIABLES (Từ DayNightCycle.cs, mô phỏng COBBLEVERSE) ===
             float _NoonFactor;
+            
+            float _FogHeight;
+            float _FogHeightFalloff;
+            half4 _AtmosphereColor;
+            float _AtmosphereStrength;
 
             struct Attributes
             {
@@ -130,8 +135,12 @@ Shader "Custom/VoxelVertexColor"
                 
                 half3 finalColor = albedo * finalLight * vanillaAO;
                 
-                // Trộn sương mù
-                finalColor = MixFog(finalColor, IN.fogFactor);
+                // --- Cinematic Fog ---
+                float distanceFog = 1.0 - saturate(IN.fogFactor); // URP fogFactor: 1 = no fog, 0 = max fog
+                float heightFog = exp(-max(IN.positionWS.y - _FogHeight, 0.0) * _FogHeightFalloff);
+                float fogAmount = saturate(distanceFog * lerp(1.0, heightFog, 1.0)) * _AtmosphereStrength;
+                
+                finalColor = lerp(finalColor, _AtmosphereColor.rgb, fogAmount);
                 
                 return half4(finalColor, 1.0);
             }

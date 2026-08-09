@@ -67,6 +67,11 @@ Shader "Custom/VoxelWater"
             float _NightFactor;
             float _ShadowTime;
             float _RainFactor;
+            
+            float _FogHeight;
+            float _FogHeightFalloff;
+            half4 _AtmosphereColor;
+            float _AtmosphereStrength;
 
             #define PI 3.14159265358979323846
 
@@ -227,8 +232,12 @@ Shader "Custom/VoxelWater"
                     finalColor = lerp(finalColor, _FoamColor.rgb, foam);
                 }
                 
-                // --- Fog ---
-                finalColor = lerp(finalColor, MixFog(finalColor, IN.fogFactor), _FogStrength);
+                // --- Cinematic Fog ---
+                float distanceFog = 1.0 - saturate(IN.fogFactor);
+                float heightFog = exp(-max(IN.positionWS.y - _FogHeight, 0.0) * _FogHeightFalloff);
+                float cinematicFogAmount = saturate(distanceFog * lerp(1.0, heightFog, 1.0)) * _AtmosphereStrength;
+                
+                finalColor = lerp(finalColor, _AtmosphereColor.rgb, cinematicFogAmount * _FogStrength);
                 
                 // --- Alpha ---
                 half alpha = lerp(_BaseAlpha, 1.0, fresnel * 0.5);

@@ -26,6 +26,9 @@ public class PlayerController : MonoBehaviour
     [Tooltip("Tốc độ di chuyển (block/giây)")]
     [SerializeField] private float moveSpeed = 5f;
 
+    [Tooltip("Tốc độ bay")]
+    [SerializeField] private float flySpeed = 20f;
+
     [Tooltip("Lực nhảy")]
     [SerializeField] private float jumpForce = 8f;
 
@@ -44,6 +47,11 @@ public class PlayerController : MonoBehaviour
     private Vector3 velocity;           // Vận tốc hiện tại (chủ yếu dùng cho Y: gravity + jump)
     private float cameraPitch = 0f;     // Góc nghiêng camera (trục X), clamp ±90°
     private bool cursorLocked = true;
+
+    // Fly state
+    private bool isFlying = false;
+    private float lastSpaceTime = -1f;
+    private float doubleTapThreshold = 0.3f;
 
     private void Start()
     {
@@ -125,31 +133,54 @@ public class PlayerController : MonoBehaviour
     /// </summary>
     private void HandleMovement()
     {
-        // Check chạm đất
-        if (controller.isGrounded && velocity.y < 0)
+        // Double-tap Space để bật/tắt chế độ bay
+        if (Input.GetButtonDown("Jump"))
         {
-            velocity.y = -2f;  // Giá trị nhỏ âm giữ chân dính đất
+            if (Time.time - lastSpaceTime < doubleTapThreshold)
+            {
+                isFlying = !isFlying;
+                if (!isFlying) velocity.y = 0f; // Reset lực khi tắt bay
+            }
+            lastSpaceTime = Time.time;
         }
 
-        // Input di chuyển (local space)
+        // Áp dụng tốc độ tùy theo trạng thái
+        float currentSpeed = isFlying ? flySpeed : moveSpeed;
+
+        // Input di chuyển ngang (local space)
         float moveX = Input.GetAxis("Horizontal");  // A/D
         float moveZ = Input.GetAxis("Vertical");    // W/S
 
         // Chuyển từ local → world direction
         Vector3 move = transform.right * moveX + transform.forward * moveZ;
-        controller.Move(move * moveSpeed * Time.deltaTime);
+        controller.Move(move * currentSpeed * Time.deltaTime);
 
-        // Nhảy
-        if (Input.GetButtonDown("Jump") && controller.isGrounded)
+        if (isFlying)
         {
-            // Công thức: v = sqrt(2 * |gravity| * jumpHeight)
-            // Đơn giản hóa: gán trực tiếp jumpForce
-            velocity.y = jumpForce;
-        }
+            // Trạng thái bay: Không có gravity, Space để bay lên, Shift/Ctrl để bay xuống
+            float flyVertical = 0f;
+            if (Input.GetButton("Jump")) flyVertical = currentSpeed;
+            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.LeftControl)) flyVertical = -currentSpeed;
 
-        // Gravity
-        velocity.y += gravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
+            velocity.y = flyVertical;
+            controller.Move(velocity * Time.deltaTime);
+        }
+        else
+        {
+            // Trạng thái bình thường: đi bộ, nhảy, có trọng lực
+            if (controller.isGrounded && velocity.y < 0)
+            {
+                velocity.y = -2f;  // Giá trị nhỏ âm giữ chân dính đất
+            }
+
+            if (Input.GetButtonDown("Jump") && controller.isGrounded)
+            {
+                velocity.y = jumpForce;
+            }
+
+            velocity.y += gravity * Time.deltaTime;
+            controller.Move(velocity * Time.deltaTime);
+        }
     }
 
     private void SetCursorLock(bool locked)
