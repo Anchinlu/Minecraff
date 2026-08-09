@@ -7,5 +7,6 @@ public enum BlockType
     Air = 0,    // Block rỗng — face tiếp giáp Air sẽ được vẽ
     Stone,      // Đá — block chính cho demo giai đoạn 1
     Grass,      // Cỏ — dùng từ giai đoạn 2 (Perlin Noise terrain)
-    Dirt        // Đất — dùng từ giai đoạn 2
+    Dirt,       // Đất — dùng từ giai đoạn 2
+    Water       // Nước — Phase 1: Nước tĩnh, trong suốt
 }

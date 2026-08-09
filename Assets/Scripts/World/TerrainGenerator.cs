@@ -50,6 +50,19 @@ public class TerrainGenerator
     /// <summary>Số lớp Dirt bên dưới bề mặt Grass.</summary>
     public int dirtLayerDepth = 3;
 
+    // === TÍNH NĂNG MỚI: HỒ & SÔNG ===
+    [Header("Water Table (Hồ)")]
+    public float baseWaterTableY = 30f;
+    public float waterTableVariance = 8f;
+    public float waterTableNoiseScale = 0.004f; // càng thấp, hồ càng to và ít
+
+    [Header("River (Sông/Suối)")]
+    public float riverWarpStrength = 40f;
+    public float riverWarpScale = 0.008f;
+    public float riverNoiseScale = 0.006f;
+    public float riverWidth = 0.02f;    // càng nhỏ, sông càng mảnh và hiếm
+    public int riverDepth = 4;          // độ sâu khoét lòng sông
+
     /// <summary>
     /// Khởi tạo với seed ngẫu nhiên.
     /// Range 0-10000 để tránh Perlin Noise bị lặp pattern ở gốc tọa độ.
@@ -106,7 +119,39 @@ public class TerrainGenerator
         
         // 4. Tổng hợp
         float finalHeight = baseHeight + baseElevation + (detailNoise * maxHeight * heightMultiplier);
-        return Mathf.FloorToInt(finalHeight);
+        int terrainHeight = Mathf.FloorToInt(finalHeight);
+        
+        CarveRiver(worldX, worldZ, ref terrainHeight);
+        
+        return terrainHeight;
+    }
+
+    public float GetWaterTableHeight(float x, float z)
+    {
+        // Để mặt nước phẳng hoàn toàn như gương, ta sử dụng chung một mực nước ngầm (Sea Level).
+        // Không dùng Perlin Noise ở đây vì nó sẽ làm mặt nước lồi lõm như đồi núi!
+        return baseWaterTableY;
+    }
+
+    public float GetRiverMask(float x, float z)
+    {
+        // Domain Warping — làm méo tọa độ trước khi sample, tạo đường cong tự nhiên
+        float warpX = x + Mathf.PerlinNoise((x + seed) * riverWarpScale, (z + seed) * riverWarpScale) * riverWarpStrength;
+        float warpZ = z + Mathf.PerlinNoise((x + seed) * riverWarpScale + 100f, (z + seed) * riverWarpScale) * riverWarpStrength;
+
+        float riverNoise = Mathf.PerlinNoise(warpX * riverNoiseScale, warpZ * riverNoiseScale);
+        return Mathf.Abs(riverNoise - 0.5f); // gần 0 = giữa lòng sông
+    }
+
+    public void CarveRiver(int worldX, int worldZ, ref int terrainHeight)
+    {
+        float riverDist = GetRiverMask(worldX, worldZ);
+        if (riverDist < riverWidth)
+        {
+            // SmoothStep để bờ sông thoải dần, không dựng đứng như hào nước
+            float carveFactor = 1f - Mathf.SmoothStep(0f, riverWidth, riverDist);
+            terrainHeight -= Mathf.RoundToInt(carveFactor * riverDepth);
+        }
     }
 
     /// <summary>
@@ -118,15 +163,13 @@ public class TerrainGenerator
     /// - 1-3 block dưới bề mặt → Dirt
     /// - Sâu hơn nữa → Stone
     /// </summary>
-    public BlockType GetBlockType(int worldX, int y, int worldZ)
+    public BlockType GetTerrainBlockType(int y, int surfaceHeight, int waterTable)
     {
-        int surfaceHeight = GetHeight(worldX, worldZ);
-
-        if (y > surfaceHeight)
-            return BlockType.Air;       // Trên bề mặt = không khí
-
         if (y == surfaceHeight)
-            return BlockType.Grass;     // Đúng bề mặt = cỏ
+        {
+            if (y < waterTable) return BlockType.Dirt; // Bề mặt dưới nước là Đất bùn, không mọc cỏ
+            return BlockType.Grass;     // Bề mặt trên cạn = Cỏ
+        }
 
         if (y >= surfaceHeight - dirtLayerDepth)
             return BlockType.Dirt;      // Vài lớp dưới = đất

@@ -4,7 +4,7 @@ using System.Collections.Generic;
 public class SunManager : MonoBehaviour
 {
     public float voxelSize = 25f; // Tăng kích thước bự hơn
-    public float distanceFromPlayer = 700f; // Cách xa 700 block theo ý người dùng
+    public float distanceFromPlayer = 1500f; // Cách xa 1500 block (700 + 800 thêm)
     public Material sunMaterial;
 
     Transform player;
@@ -49,10 +49,25 @@ public class SunManager : MonoBehaviour
         transform.position = player.position + sunDirection * distanceFromPlayer;
         transform.LookAt(player.position);
 
-        // Đồng bộ màu của mặt trời theo màu ánh sáng (Sáng/Trưa/Hoàng hôn)
+        // Đồng bộ màu mặt trời: Neon rực + pha theo màu bầu trời
         if (sunMaterial != null)
         {
-            sunMaterial.SetColor("_Color", dayNight.GetSunColor());
+            Color baseColor = dayNight.GetSunColor();
+            Color skyTint = dayNight.GetSkyHorizonColor();
+            
+            // Pha 70% màu nắng + 30% màu chân trời → mặt trời đổi sắc theo bầu trời
+            Color blended = Color.Lerp(baseColor, skyTint, 0.3f);
+            
+            // Đẩy lên Neon HDR: nhân hệ số > 1 để phát sáng chói lòa vượt giới hạn màn hình
+            float neonBoost = 2.5f;
+            Color neonColor = new Color(
+                blended.r * neonBoost,
+                blended.g * neonBoost,
+                blended.b * neonBoost,
+                1f
+            );
+            
+            sunMaterial.SetColor("_Color", neonColor);
         }
     }
 

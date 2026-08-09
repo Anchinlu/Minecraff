@@ -43,6 +43,9 @@ Shader "Custom/VoxelTextured"
             TEXTURE2D(_MainTex);
             SAMPLER(sampler_MainTex);
 
+            // === GLOBAL SHADER VARIABLES (Từ DayNightCycle.cs, mô phỏng COBBLEVERSE) ===
+            float _NoonFactor;
+
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
@@ -69,14 +72,63 @@ Shader "Custom/VoxelTextured"
                 half3 lightColor = mainLight.color * mainLight.distanceAttenuation * mainLight.shadowAttenuation;
                 half NdotL = saturate(dot(normalize(IN.normalWS), normalize(mainLight.direction)));
                 
-                // Ánh sáng toàn cục (Ambient) nhỏ để khuất nắng không đen xì
-                half3 ambient = half3(0.2, 0.2, 0.25);
+                // === DIRECTIONAL SHADING (Từ COBBLEVERSE mainLighting.glsl L632-668) ===
+                half NdotN = dot(IN.normalWS, half3(0, 0, 1)); // Trục Bắc Nam (Z)
+                half absNdotN = abs(NdotN);
+                half NdotE = dot(IN.normalWS, half3(1, 0, 0)); // Trục Đông Tây (X)
+                half absNdotE = abs(NdotE);
+                half absNdotE2 = absNdotE * absNdotE;
+                half NdotU = dot(IN.normalWS, half3(0, 1, 0)); // Trục Trên Dưới (Y)
+                half NdotUmax0 = max(NdotU, 0.0);
                 
-                // Tổng hợp ánh sáng: Ambient + NdotL
-                half3 finalLight = ambient + (lightColor * NdotL);
+                half NdotUM = 0.75 + NdotU * 0.25;
+                half NdotNM = 1.0 + 0.075 * absNdotN;
+                half NdotEM = 1.0 - 0.1 * absNdotE2;
+                half directionShade = NdotUM * NdotEM * NdotNM;
                 
-                // Màu cuối cùng = Albedo * Real-time Light
-                half3 finalColor = albedo * finalLight;
+                // === NÂNG CẤP ÁNH SÁNG (Từ COBBLEVERSE mainLighting.glsl) ===
+                
+                // Mặt Đông-Tây sáng hơn (COBBLEVERSE L648)
+                half3 lightColorM = lightColor * (1.0 + absNdotE2 * 0.75);
+                
+                // 1. Ambient ánh sáng môi trường động
+                half3 ambient = SampleSH(IN.normalWS) * 0.8;
+                
+                // 2. Fake Bounced Light (COBBLEVERSE L663)
+                half3 bouncedLight = lightColorM * 0.05 * absNdotN;
+                ambient += bouncedLight;
+
+                // 3. Wrap Lighting mềm (COBBLEVERSE Side Shadowing L236)
+                half wrapNdotL = saturate((NdotL + 0.4) * 0.714);
+                
+                // 4. Fake Rim Light
+                float3 viewDir = normalize(_WorldSpaceCameraPos - IN.positionWS);
+                half rim = 1.0 - saturate(dot(viewDir, normalize(IN.normalWS)));
+                rim = pow(rim, 3.0);
+                half3 rimColor = lightColor * rim * 0.15;
+                
+                // 5. Fake Sky Light
+                half skyFactor = saturate(NdotU) * 0.5;
+                half3 skyLight = SampleSH(half3(0,1,0)) * skyFactor;
+                
+                // 6. Noon Contrast Boost (COBBLEVERSE L666)
+                half noonPow = _NoonFactor * _NoonFactor * _NoonFactor * _NoonFactor * _NoonFactor;
+                noonPow *= noonPow;
+                lightColorM *= 1.0 + noonPow * (absNdotN * absNdotN * 0.8 - absNdotE2 * 0.2);
+                
+                // Tổng hợp ánh sáng và áp dụng Directional Shading
+                half3 finalLight = (ambient + skyLight + (lightColorM * wrapNdotL) + rimColor) * directionShade;
+                
+                // === VANILLA AO NÂNG CAO (Từ COBBLEVERSE mainLighting.glsl L744-780) ===
+                half vanillaAO = IN.color.a;
+                vanillaAO = min(vanillaAO + 0.08, 1.0);
+                half dotSceneLighting = dot(finalLight, finalLight);
+                half aoExponent = 1.0 + dotSceneLighting * 0.02 + NdotUmax0 * (0.15 + 0.25 * _NoonFactor * _NoonFactor);
+                vanillaAO = pow(pow(max(vanillaAO, 0.001), 1.5), aoExponent);
+                vanillaAO = vanillaAO * 0.9 + 0.1;
+                
+                // Màu cuối cùng = Albedo * Real-time Light * AO
+                half3 finalColor = albedo * finalLight * vanillaAO;
                 
                 // Trộn sương mù (Fog)
                 finalColor = MixFog(finalColor, IN.fogFactor);

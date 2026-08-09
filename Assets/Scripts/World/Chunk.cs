@@ -34,10 +34,12 @@ public class Chunk
     
     // Mảng 3D lưu độ sáng (0 đến 15)
     private byte[,,] lightMap;
+    public byte[,,] waterLevel; // Phase 1: 0 = Không nước, 1-7 = Nước chảy, 8 = Nước nguồn
 
     // Material fields (cho submeshes)
     private Material matVertexColor;
     private Material matGrassTexture;
+    private Material matWater;
 
     // === MESH COMPONENT REFERENCES ===
     private MeshFilter meshFilter;
@@ -119,6 +121,7 @@ public class Chunk
     {
         blocks = new BlockType[ChunkWidth, ChunkHeight, ChunkWidth];
         lightMap = new byte[ChunkWidth, ChunkHeight, ChunkWidth];
+        waterLevel = new byte[ChunkWidth, ChunkHeight, ChunkWidth];
     }
 
     /// <summary>
@@ -139,9 +142,31 @@ public class Chunk
                 int worldX = x + chunkWorldPos.x;
                 int worldZ = z + chunkWorldPos.z;
 
+                int terrainHeight = generator.GetHeight(worldX, worldZ);
+                float waterTable = generator.GetWaterTableHeight(worldX, worldZ);
+                int waterTableInt = Mathf.FloorToInt(waterTable);
+
                 for (int y = 0; y < ChunkHeight; y++)
                 {
-                    blocks[x, y, z] = generator.GetBlockType(worldX, y, worldZ);
+                    BlockType type;
+                    if (y <= terrainHeight)
+                    {
+                        type = generator.GetTerrainBlockType(y, terrainHeight, waterTableInt);
+                    }
+                    else if (y <= waterTableInt)
+                    {
+                        type = BlockType.Water;
+                    }
+                    else
+                    {
+                        type = BlockType.Air;
+                    }
+
+                    blocks[x, y, z] = type;
+                    if (type == BlockType.Water) 
+                    {
+                        waterLevel[x, y, z] = 8; // Mặc định khối nước sinh ra là Nguồn
+                    }
                 }
             }
         }
@@ -149,35 +174,80 @@ public class Chunk
         CalculateSunlight();
     }
 
-    public void Init(Material vertexColorMat, Material grassTextureMat, Vector3Int worldPos)
+    public void Init(Material vertexColorMat, Material grassTextureMat, Material waterMat, Vector3Int worldPos)
     {
         matVertexColor = vertexColorMat;
         matGrassTexture = grassTextureMat;
+        matWater = waterMat;
         chunkWorldPos = worldPos;
     }
 
-    public void CalculateSunlight()
+    public void CalculateSunlight(Vector3Int? modifiedLocalPos = null)
     {
         Queue<Vector3Int> lightBfsQueue = new Queue<Vector3Int>();
 
-        // Pass 1: Tia nắng chiếu thẳng từ trên xuống
-        for (int x = 0; x < ChunkWidth; x++)
+        int startX = 0; int endX = ChunkWidth - 1;
+        int startY = 0; int endY = ChunkHeight - 1;
+        int startZ = 0; int endZ = ChunkWidth - 1;
+
+        if (modifiedLocalPos.HasValue)
         {
-            for (int z = 0; z < ChunkWidth; z++)
+            Vector3Int p = modifiedLocalPos.Value;
+            startX = Mathf.Max(0, p.x - 15);
+            endX = Mathf.Min(ChunkWidth - 1, p.x + 15);
+            startY = Mathf.Max(0, p.y - 15);
+            endY = Mathf.Min(ChunkHeight - 1, p.y + 15);
+            startZ = Mathf.Max(0, p.z - 15);
+            endZ = Mathf.Min(ChunkWidth - 1, p.z + 15);
+        }
+
+        // Pass 1: Tia nắng chiếu thẳng từ trên xuống (quét các cột trong vùng ảnh hưởng)
+        for (int x = startX; x <= endX; x++)
+        {
+            for (int z = startZ; z <= endZ; z++)
             {
                 byte currentLight = 15;
                 for (int y = ChunkHeight - 1; y >= 0; y--)
                 {
-                    if (blocks[x, y, z] != BlockType.Air)
+                    BlockType b = blocks[x, y, z];
+                    if (b != BlockType.Air && b != BlockType.Water)
                     {
-                        currentLight = 0; // Đụng vật cản là tắt nắng
+                        currentLight = 0; // Đụng vật cản rắn là tắt nắng
                     }
-                    lightMap[x, y, z] = currentLight;
-
-                    // Nếu có ánh sáng, đưa vào hàng đợi BFS để loang ra xung quanh
-                    if (currentLight > 0)
+                    
+                    if (y <= endY && y >= startY)
                     {
-                        lightBfsQueue.Enqueue(new Vector3Int(x, y, z));
+                        lightMap[x, y, z] = currentLight;
+                        if (currentLight > 0)
+                        {
+                            lightBfsQueue.Enqueue(new Vector3Int(x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Đưa các block viền của vùng ảnh hưởng (đang có ánh sáng) vào Queue để loang ngược vào trong
+        if (modifiedLocalPos.HasValue)
+        {
+            for (int x = startX; x <= endX; x++)
+            for (int y = startY; y <= endY; y++)
+            for (int z = startZ; z <= endZ; z++)
+            {
+                if (x == startX || x == endX || y == startY || y == endY || z == startZ || z == endZ)
+                {
+                    Vector3Int[] dirs = { Vector3Int.right, Vector3Int.left, Vector3Int.up, Vector3Int.down, Vector3Int.forward, Vector3Int.back };
+                    foreach (var d in dirs)
+                    {
+                        int nx = x + d.x, ny = y + d.y, nz = z + d.z;
+                        if (nx >= 0 && nx < ChunkWidth && ny >= 0 && ny < ChunkHeight && nz >= 0 && nz < ChunkWidth)
+                        {
+                            if (nx < startX || nx > endX || ny < startY || ny > endY || nz < startZ || nz > endZ)
+                            {
+                                if (lightMap[nx, ny, nz] > 0)
+                                    lightBfsQueue.Enqueue(new Vector3Int(nx, ny, nz));
+                            }
+                        }
                     }
                 }
             }
@@ -198,8 +268,9 @@ public class Chunk
                     neighborPos.y >= 0 && neighborPos.y < ChunkHeight &&
                     neighborPos.z >= 0 && neighborPos.z < ChunkWidth)
                 {
-                    // Chỉ lan truyền nếu láng giềng là Air và ánh sáng của láng giềng nhỏ hơn mức truyền tới
-                    if (blocks[neighborPos.x, neighborPos.y, neighborPos.z] == BlockType.Air)
+                    // Chỉ lan truyền nếu láng giềng là trong suốt (Air/Water)
+                    BlockType nb = blocks[neighborPos.x, neighborPos.y, neighborPos.z];
+                    if (nb == BlockType.Air || nb == BlockType.Water)
                     {
                         byte propagatedLight = (byte)(lightLevel - 1);
                         if (lightMap[neighborPos.x, neighborPos.y, neighborPos.z] < propagatedLight)
@@ -228,17 +299,68 @@ public class Chunk
     /// Trả về true nếu thay đổi thành công, false nếu ngoài biên.
     /// Sau khi gọi, cần gọi RebuildMesh() để cập nhật visual.
     /// </summary>
-    public bool SetBlock(int x, int y, int z, BlockType newType)
+    public bool SetBlock(int x, int y, int z, BlockType blockType)
     {
-        if (x < 0 || x >= ChunkWidth ||
-            y < 0 || y >= ChunkHeight ||
-            z < 0 || z >= ChunkWidth)
+        if (x < 0 || x >= ChunkWidth || y < 0 || y >= ChunkHeight || z < 0 || z >= ChunkWidth) return false;
+        
+        if (blocks[x, y, z] != blockType)
         {
-            return false;
+            blocks[x, y, z] = blockType;
+            return true; // Trả về true báo hiệu chunk đã thay đổi, cần build lại mesh
+        }
+        return false;
+    }
+
+    public bool SetWaterLevel(int x, int y, int z, byte level)
+    {
+        if (x < 0 || x >= ChunkWidth || y < 0 || y >= ChunkHeight || z < 0 || z >= ChunkWidth) return false;
+        
+        if (waterLevel[x, y, z] != level)
+        {
+            waterLevel[x, y, z] = level;
+            return true; // Trả về true báo hiệu chunk đã thay đổi
+        }
+        return false;
+    }
+
+    private float GetVertexWaterHeight(int x, int y, int z, int cornerDX, int cornerDZ)
+    {
+        float totalHeight = 0f;
+        int count = 0;
+
+        for (int dx = 0; dx <= 1; dx++)
+        {
+            for (int dz = 0; dz <= 1; dz++)
+            {
+                int nx = x + (dx == 0 ? 0 : cornerDX);
+                int nz = z + (dz == 0 ? 0 : cornerDZ);
+
+                BlockType neighborType = GetBlockAt(nx, y, nz);
+                if (neighborType == BlockType.Water)
+                {
+                    BlockType upNeighbor = GetBlockAt(nx, y + 1, nz);
+                    if (upNeighbor == BlockType.Water)
+                    {
+                        totalHeight += 1.0f;
+                    }
+                    else
+                    {
+                        byte level = GetWaterLevelAt(nx, y, nz);
+                        totalHeight += (level >= 8) ? 0.9f : (level / 8f) * 0.9f;
+                    }
+                    count++;
+                }
+                else if (neighborType == BlockType.Air)
+                {
+                    // LỖI CŨ: totalHeight += 0f; (Kéo tụt nước xuống 0 tạo ra dốc và rách lưới ở chunk boundary)
+                    // SỬA: Giữ nguyên mặt phẳng nước 0.9f để nước phẳng như gương, không bị rách
+                    totalHeight += 0.9f; 
+                    count++;
+                }
+            }
         }
 
-        blocks[x, y, z] = newType;
-        return true;
+        return count > 0 ? totalHeight / count : 0.9f;
     }
 
     /// <summary>
@@ -253,10 +375,49 @@ public class Chunk
             meshFilter.mesh = mesh;
 
         if (meshCollider != null)
-            meshCollider.sharedMesh = mesh;
+        {
+            // Tối ưu: Tạo Mesh riêng cho Collider, CHỈ bao gồm Opaque (0) và Grass (1)
+            // Lọc bỏ Water (2) để Raycast xuyên qua nước, người chơi bơi qua nước,
+            // và click đặt block sẽ thay thế nước thay vì đè lên trên.
+            Mesh colMesh = new Mesh();
+            colMesh.vertices = mesh.vertices;
+            
+            List<int> colTriangles = new List<int>();
+            if (mesh.subMeshCount > 0) colTriangles.AddRange(mesh.GetTriangles(0)); // VertexColor (Opaque)
+            if (mesh.subMeshCount > 1) colTriangles.AddRange(mesh.GetTriangles(1)); // Grass
+            
+            colMesh.SetTriangles(colTriangles.ToArray(), 0);
+
+            meshCollider.cookingOptions = MeshColliderCookingOptions.None;
+            meshCollider.sharedMesh = colMesh;
+        }
 
         if (meshRenderer != null)
-            meshRenderer.materials = new Material[] { matVertexColor, matGrassTexture };
+            meshRenderer.materials = new Material[] { matVertexColor, matGrassTexture, matWater };
+    }
+
+    /// <summary>
+    /// Thêm MeshCollider động cho các chunk khi người chơi đến gần (nếu chưa có).
+    /// Giúp tiết kiệm cực nhiều CPU Physics Bake ở những chunk xa.
+    /// </summary>
+    public void EnsureColliderAdded()
+    {
+        if (meshCollider != null || meshFilter == null || meshFilter.sharedMesh == null) return;
+        
+        meshCollider = meshFilter.gameObject.AddComponent<MeshCollider>();
+        
+        Mesh fullMesh = meshFilter.sharedMesh;
+        Mesh colMesh = new Mesh();
+        colMesh.vertices = fullMesh.vertices;
+        
+        List<int> colTriangles = new List<int>();
+        if (fullMesh.subMeshCount > 0) colTriangles.AddRange(fullMesh.GetTriangles(0)); // Opaque
+        if (fullMesh.subMeshCount > 1) colTriangles.AddRange(fullMesh.GetTriangles(1)); // Grass
+        
+        colMesh.SetTriangles(colTriangles.ToArray(), 0);
+        
+        meshCollider.cookingOptions = MeshColliderCookingOptions.None;
+        meshCollider.sharedMesh = colMesh;
     }
 
     /// <summary>
@@ -276,6 +437,20 @@ public class Chunk
         }
 
         return blocks[x, y, z];
+    }
+
+    public byte GetWaterLevelAt(int x, int y, int z)
+    {
+        if (y < 0 || y >= ChunkHeight) return 0;
+
+        if (x < 0 || x >= ChunkWidth || z < 0 || z >= ChunkWidth)
+        {
+            if (world != null)
+                return world.GetWaterLevel(chunkWorldPos + new Vector3Int(x, y, z));
+            return 0;
+        }
+
+        return waterLevel[x, y, z];
     }
 
     /// <summary>
@@ -298,7 +473,8 @@ public class Chunk
 
     public bool IsOpaque(Vector3Int pos)
     {
-        return GetBlockAt(pos.x, pos.y, pos.z) != BlockType.Air;
+        BlockType b = GetBlockAt(pos.x, pos.y, pos.z);
+        return b != BlockType.Air && b != BlockType.Water;
     }
 
     /// <summary>
@@ -312,9 +488,13 @@ public class Chunk
         vertices = new List<Vector3>();
         trianglesVertexColor = new List<int>();
         trianglesGrass = new List<int>();
+        List<int> trianglesWater = new List<int>();
         colors = new List<Color>();
         uvs = new List<Vector2>();
         normals = new List<Vector3>();
+
+        Dictionary<Vector3Int, bool> opaqueCache = new Dictionary<Vector3Int, bool>();
+        Dictionary<Vector3Int, byte> lightCache = new Dictionary<Vector3Int, byte>();
 
         for (int x = 0; x < ChunkWidth; x++)
         {
@@ -334,9 +514,48 @@ public class Chunk
                         Vector3Int neighborPos = blockPos + faceDirections[face];
                         BlockType neighbor = GetBlockAt(neighborPos.x, neighborPos.y, neighborPos.z);
 
-                        if (neighbor == BlockType.Air)
+                        bool drawFace = false;
+                        if (currentBlock == BlockType.Water)
                         {
-                            AddFace(blockPos, face, currentBlock);
+                            // Water-Water: Xử lý khe hở (Gap) do chênh lệch độ cao
+                            if (neighbor == BlockType.Water) 
+                            {
+                                if (face == 2 || face == 3) 
+                                {
+                                    drawFace = false; // Mặt Top/Bottom của cột nước luôn nối liền
+                                }
+                                else
+                                {
+                                    // So sánh độ cao để quyết định vẽ mặt bên
+                                    bool hasWaterAboveCurrent = GetBlockAt(blockPos.x, blockPos.y + 1, blockPos.z) == BlockType.Water;
+                                    bool hasWaterAboveNeighbor = GetBlockAt(neighborPos.x, neighborPos.y + 1, neighborPos.z) == BlockType.Water;
+                                    
+                                    if (hasWaterAboveCurrent && !hasWaterAboveNeighbor) 
+                                    {
+                                        drawFace = true; // Mình là cột đứng, hàng xóm là mặt thoáng -> Vẽ mặt để lấp gap
+                                    }
+                                    else
+                                    {
+                                        // Các trường hợp còn lại (mặt hồ phẳng, hoặc sâu dưới lòng hồ) -> ẩn mặt nối
+                                        drawFace = false;
+                                    }
+                                }
+                            }
+                            // Water-Air hoặc Water-Solid: LUÔN vẽ
+                            else
+                            {
+                                drawFace = true;
+                            }
+                        }
+                        else
+                        {
+                            // Đất đá vẽ nếu kề nước hoặc khí
+                            if (neighbor == BlockType.Air || neighbor == BlockType.Water) drawFace = true;
+                        }
+
+                        if (drawFace)
+                        {
+                            AddFace(blockPos, face, currentBlock, opaqueCache, lightCache, trianglesWater);
                         }
                     }
                 }
@@ -348,9 +567,10 @@ public class Chunk
         mesh.vertices = vertices.ToArray();
         mesh.normals = normals.ToArray();
         
-        mesh.subMeshCount = 2;
+        mesh.subMeshCount = 3;
         mesh.SetTriangles(trianglesVertexColor.ToArray(), 0);
         mesh.SetTriangles(trianglesGrass.ToArray(), 1);
+        mesh.SetTriangles(trianglesWater.ToArray(), 2);
 
         mesh.colors = colors.ToArray();
         mesh.uv = uvs.ToArray();
@@ -360,20 +580,62 @@ public class Chunk
         return mesh;
     }
 
+    private bool IsOpaqueCached(Vector3Int pos, Dictionary<Vector3Int, bool> cache)
+    {
+        if (cache.TryGetValue(pos, out bool isOpaque)) return isOpaque;
+        bool result = IsOpaque(pos);
+        cache[pos] = result;
+        return result;
+    }
+
+    private byte GetLightAtCached(Vector3Int pos, Dictionary<Vector3Int, byte> cache)
+    {
+        if (cache.TryGetValue(pos, out byte light)) return light;
+        byte result = GetLightAt(pos.x, pos.y, pos.z);
+        cache[pos] = result;
+        return result;
+    }
+
     /// <summary>
     /// Thêm 1 face (4 vertices + 2 triangles + 4 colors) vào mesh data.
     /// </summary>
-    private void AddFace(Vector3Int blockPos, int faceIndex, BlockType blockType)
+    private void AddFace(Vector3Int blockPos, int faceIndex, BlockType blockType, Dictionary<Vector3Int, bool> opaqueCache, Dictionary<Vector3Int, byte> lightCache, List<int> trianglesWater)
     {
         int vertexIndex = vertices.Count;
 
         for (int i = 0; i < 4; i++)
         {
-            vertices.Add((Vector3)blockPos + faceVertices[faceIndex][i]);
+            Vector3 v = (Vector3)blockPos + faceVertices[faceIndex][i];
+            
+            // Xử lý co lại Y của nước dựa trên waterLevel
+            // Dùng Vertex Interpolation để tạo độ dốc mượt mà
+            if (blockType == BlockType.Water && v.y > blockPos.y) 
+            {
+                BlockType blockAbove = GetBlockAt(blockPos.x, blockPos.y + 1, blockPos.z);
+                if (blockAbove != BlockType.Water)
+                {
+                    int cornerDX = (v.x > blockPos.x) ? 1 : -1;
+                    int cornerDZ = (v.z > blockPos.z) ? 1 : -1;
+                    
+                    float height = GetVertexWaterHeight(blockPos.x, blockPos.y, blockPos.z, cornerDX, cornerDZ);
+                    v.y = blockPos.y + height;
+                }
+            }
+
+            vertices.Add(v);
         }
 
         // Add triangles to the correct submesh list
-        if (blockType == BlockType.Grass)
+        if (blockType == BlockType.Water)
+        {
+            trianglesWater.Add(vertexIndex + 0);
+            trianglesWater.Add(vertexIndex + 1);
+            trianglesWater.Add(vertexIndex + 2);
+            trianglesWater.Add(vertexIndex + 0);
+            trianglesWater.Add(vertexIndex + 2);
+            trianglesWater.Add(vertexIndex + 3);
+        }
+        else if (blockType == BlockType.Grass)
         {
             trianglesGrass.Add(vertexIndex + 0);
             trianglesGrass.Add(vertexIndex + 1);
@@ -421,14 +683,14 @@ public class Chunk
             Vector3Int posSide2 = center + d2;
             Vector3Int posCorner = center + d1 + d2;
             
-            bool oSide1 = IsOpaque(posSide1);
-            bool oSide2 = IsOpaque(posSide2);
-            bool oCorner = IsOpaque(posCorner);
+            bool oSide1 = IsOpaqueCached(posSide1, opaqueCache);
+            bool oSide2 = IsOpaqueCached(posSide2, opaqueCache);
+            bool oCorner = IsOpaqueCached(posCorner, opaqueCache);
             
-            int lightCenter = GetLightAt(center.x, center.y, center.z);
-            int lightSide1 = GetLightAt(posSide1.x, posSide1.y, posSide1.z);
-            int lightSide2 = GetLightAt(posSide2.x, posSide2.y, posSide2.z);
-            int lightCorner = GetLightAt(posCorner.x, posCorner.y, posCorner.z);
+            int lightCenter = GetLightAtCached(center, lightCache);
+            int lightSide1 = GetLightAtCached(posSide1, lightCache);
+            int lightSide2 = GetLightAtCached(posSide2, lightCache);
+            int lightCorner = GetLightAtCached(posCorner, lightCache);
             
             int count = 1;
             int totalLight = lightCenter;
@@ -477,6 +739,22 @@ public class Chunk
             uvs.Add(uvOrigin + new Vector2(GrassUV.TILE - shrinkX, 1f - shrinkY));
             uvs.Add(uvOrigin + new Vector2(GrassUV.TILE - shrinkX, shrinkY));
         }
+        else if (blockType == BlockType.Water)
+        {
+            // Truyền cờ "bề mặt trên cùng" qua UV.y để Shader làm gợn sóng mà không bị rách lưới
+            BlockType blockAbove = GetBlockAt(blockPos.x, blockPos.y + 1, blockPos.z);
+            bool isTopSurface = (blockAbove != BlockType.Water);
+            
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 localVert = faceVertices[faceIndex][i];
+                // Nếu đỉnh nằm ở y=1 và khối này là bề mặt trên cùng của khối nước
+                if (localVert.y > 0.5f && isTopSurface) 
+                    uvs.Add(new Vector2(0, 1)); // 1 = có gợn sóng
+                else 
+                    uvs.Add(new Vector2(0, 0)); // 0 = đứng im
+            }
+        }
         else
         {
             // UV rỗng
@@ -497,6 +775,7 @@ public class Chunk
         {
             case BlockType.Stone: return new Color(0.5f, 0.5f, 0.5f);
             case BlockType.Dirt:  return new Color(0.55f, 0.35f, 0.17f);
+            case BlockType.Water: return new Color(0.2f, 0.5f, 0.75f); // Xanh dương
             default:              return Color.magenta;
         }
     }

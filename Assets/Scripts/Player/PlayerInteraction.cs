@@ -66,6 +66,34 @@ public class PlayerInteraction : MonoBehaviour
         {
             PlaceBlock();
         }
+
+        if (Input.GetMouseButtonDown(2))    // Nút cuộn chuột (Middle Click) → Pick Block
+        {
+            PickBlock();
+        }
+    }
+
+    /// <summary>
+    /// Pick block (chọn block bằng nút cuộn chuột).
+    /// </summary>
+    private void PickBlock()
+    {
+        if (world == null) return;
+
+        Ray ray = new Ray(playerCamera.transform.position, playerCamera.transform.forward);
+
+        if (Physics.Raycast(ray, out RaycastHit hit, reachDistance))
+        {
+            // Tính vị trí block đang nhìn vào (giống hệt logic đào)
+            Vector3Int blockPos = Vector3Int.FloorToInt(hit.point - hit.normal * 0.5f);
+            BlockType targetBlock = world.GetBlock(blockPos);
+
+            if (targetBlock != BlockType.Air)
+            {
+                placeBlockType = targetBlock;
+                Debug.Log($"[Interaction] Picked block: {placeBlockType}");
+            }
+        }
     }
 
     /// <summary>
@@ -116,7 +144,15 @@ public class PlayerInteraction : MonoBehaviour
             }
 
             // Đặt block
-            world.SetBlock(placePos, placeBlockType);
+            if (placeBlockType == BlockType.Water)
+            {
+                // Người chơi đặt nước luôn là nguồn (Level 8)
+                world.SetBlockAndWater(placePos, BlockType.Water, 8);
+            }
+            else
+            {
+                world.SetBlock(placePos, placeBlockType);
+            }
 
             Debug.Log($"[Interaction] Place {placeBlockType} at {placePos}");
         }

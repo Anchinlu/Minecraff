@@ -21,6 +21,9 @@ Shader "Custom/VoxelVertexColor"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
+            // === GLOBAL SHADER VARIABLES (Từ DayNightCycle.cs, mô phỏng COBBLEVERSE) ===
+            float _NoonFactor;
+
             struct Attributes
             {
                 float4 positionOS   : POSITION;
@@ -59,15 +62,78 @@ Shader "Custom/VoxelVertexColor"
                 half3 lightColor = mainLight.color * mainLight.distanceAttenuation * mainLight.shadowAttenuation;
                 half NdotL = saturate(dot(normalize(IN.normalWS), normalize(mainLight.direction)));
                 
-                half3 ambient = half3(0.2, 0.2, 0.25);
-                half3 finalLight = ambient + (lightColor * NdotL);
+                // === DIRECTIONAL SHADING (Từ COBBLEVERSE mainLighting.glsl L632-668) ===
+                half NdotN = dot(IN.normalWS, half3(0, 0, 1)); // Trục Bắc Nam (Z)
+                half absNdotN = abs(NdotN);
+                half NdotE = dot(IN.normalWS, half3(1, 0, 0)); // Trục Đông Tây (X)
+                half absNdotE = abs(NdotE);
+                half absNdotE2 = absNdotE * absNdotE; // pow2 (COBBLEVERSE L636)
+                half NdotU = dot(IN.normalWS, half3(0, 1, 0)); // Trục Trên Dưới (Y)
+                half NdotUmax0 = max(NdotU, 0.0);
                 
-                half3 finalColor = albedo * finalLight;
+                half NdotUM = 0.75 + NdotU * 0.25;
+                half NdotNM = 1.0 + 0.075 * absNdotN;
+                half NdotEM = 1.0 - 0.1 * absNdotE2; // COBBLEVERSE dùng absNdotE² (L644)
+                half directionShade = NdotUM * NdotEM * NdotNM;
+                
+                // === NÂNG CẤP ÁNH SÁNG (Từ COBBLEVERSE mainLighting.glsl) ===
+                
+                // Mặt Đông-Tây sáng hơn (COBBLEVERSE L648): lightColorM *= 1 + absNdotE2 * 0.75
+                half3 lightColorM = lightColor * (1.0 + absNdotE2 * 0.75);
+                
+                // 1. Ambient ánh sáng môi trường động
+                half3 ambient = SampleSH(IN.normalWS) * 0.8;
+                
+                // 2. Fake Bounced Light (COBBLEVERSE L663)
+                // ambientColor = lerp(ambientColor, lightColor, 0.05 * absNdotN * lightmapY²)
+                // lightmapY² ≈ 1.0 ngoài trời
+                half3 bouncedLight = lightColorM * 0.05 * absNdotN;
+                ambient = lerp(ambient, ambient + bouncedLight, 1.0);
+
+                // 3. Wrap Lighting mềm (COBBLEVERSE Side Shadowing L236)
+                // NdotLM = max0(NdotL + 0.4) * 0.714
+                half wrapNdotL = saturate((NdotL + 0.4) * 0.714);
+                
+                // 4. Fake Rim Light
+                float3 viewDir = normalize(_WorldSpaceCameraPos - IN.positionWS);
+                half rim = 1.0 - saturate(dot(viewDir, normalize(IN.normalWS)));
+                rim = pow(rim, 3.0);
+                half3 rimColor = lightColor * rim * 0.15;
+                
+                // 5. Fake Sky Light
+                half skyFactor = saturate(NdotU) * 0.5;
+                half3 skyLight = SampleSH(half3(0,1,0)) * skyFactor;
+                
+                // 6. Noon Contrast Boost (COBBLEVERSE L666)
+                // lightColorM *= 1 + noonFactor^20 * (absNdotN² * 0.8 - absNdotE² * 0.2)
+                // _NoonFactor đã là pow2 từ C#, ta cần pow10 thêm
+                half noonPow = _NoonFactor * _NoonFactor * _NoonFactor * _NoonFactor * _NoonFactor; // pow5 * pow2 = pow10
+                noonPow *= noonPow; // pow10 -> pow20 xấp xỉ
+                lightColorM *= 1.0 + noonPow * (absNdotN * absNdotN * 0.8 - absNdotE2 * 0.2);
+                
+                // Tổng hợp ánh sáng và áp dụng Directional Shading
+                half3 finalLight = (ambient + skyLight + (lightColorM * wrapNdotL) + rimColor) * directionShade;
+                
+                // === VANILLA AO NÂNG CAO (Từ COBBLEVERSE mainLighting.glsl L744-780 Overworld) ===
+                half vanillaAO = IN.color.a;
+                
+                // COBBLEVERSE L756: vanillaAO = min1(vanillaAO + 0.08)
+                vanillaAO = min(vanillaAO + 0.08, 1.0);
+                
+                // COBBLEVERSE L758-761: pow(pow1_5(vanillaAO), 1.0 + dotSceneLighting * 0.02 + NdotUmax0 * (0.15 + 0.25 * pow2(noonFactor * pow2(lightmapY2))))
+                half dotSceneLighting = dot(finalLight, finalLight);
+                half aoExponent = 1.0 + dotSceneLighting * 0.02 + NdotUmax0 * (0.15 + 0.25 * _NoonFactor * _NoonFactor);
+                vanillaAO = pow(pow(max(vanillaAO, 0.001), 1.5), aoExponent);
+                
+                // COBBLEVERSE L774: vanillaAO = vanillaAO * 0.9 + 0.1 (Không bao giờ hoàn toàn đen)
+                vanillaAO = vanillaAO * 0.9 + 0.1;
+                
+                half3 finalColor = albedo * finalLight * vanillaAO;
                 
                 // Trộn sương mù
                 finalColor = MixFog(finalColor, IN.fogFactor);
                 
-                return half4(finalColor, IN.color.a);
+                return half4(finalColor, 1.0);
             }
             ENDHLSL
         }
