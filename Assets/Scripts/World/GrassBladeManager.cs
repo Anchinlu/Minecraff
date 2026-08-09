@@ -9,7 +9,7 @@ public class GrassBladeManager : MonoBehaviour
     public Transform player;
 
     // Cache Cỏ theo Chunk (Tối ưu Rendering)
-    public class GrassLODData
+    public struct GrassLODData
     {
         public List<Matrix4x4> full;
         public List<Matrix4x4> lod1;

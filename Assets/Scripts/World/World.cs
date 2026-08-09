@@ -14,8 +14,8 @@ using System.Collections.Generic;
 public class World : MonoBehaviour
 {
     [Header("Tầm nhìn")]
-    public int viewDistance = 16;      // Đẩy lên mức "Ultra": 35 chunk (560 blocks) -> Tối ưu: 16
-    public int preloadDistance = 19;   // Preload trước 38 chunk (608 blocks) -> Tối ưu: 19
+    public int viewDistance = 35;      // Đẩy lên mức "Ultra": 35 chunk (560 blocks)
+    public int preloadDistance = 38;   // Preload trước 38 chunk (608 blocks)
 
     public Transform player;
 
