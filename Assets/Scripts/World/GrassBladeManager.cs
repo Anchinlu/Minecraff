@@ -9,7 +9,13 @@ public class GrassBladeManager : MonoBehaviour
     public Transform player;
 
     // Cache Cỏ theo Chunk (Tối ưu Rendering)
-    private Dictionary<Vector3Int, List<Matrix4x4>> chunkGrassCache = new Dictionary<Vector3Int, List<Matrix4x4>>();
+    public class GrassLODData
+    {
+        public List<Matrix4x4> full;
+        public List<Matrix4x4> lod1;
+        public List<Matrix4x4> lod2;
+    }
+    private Dictionary<Vector3Int, GrassLODData> chunkGrassCache = new Dictionary<Vector3Int, GrassLODData>();
     private Mesh bladeMesh;
     
     // === LOD: 2 Material — gần có bóng, xa không bóng ===
@@ -19,6 +25,8 @@ public class GrassBladeManager : MonoBehaviour
     private const int LOD0_DISTANCE = 4;   // 100% mật độ + Bóng đổ
     private const int LOD1_DISTANCE = 8;   // 33% mật độ + Không bóng
     private const int LOD2_DISTANCE = 12;  // 10% mật độ + Không bóng (rất thưa thớt)
+
+    private Vector3Int lastCheckedChunk = new Vector3Int(int.MinValue, 0, 0);
 
     void Start()
     {
@@ -40,7 +48,16 @@ public class GrassBladeManager : MonoBehaviour
             grassMaterialNoShadow.DisableKeyword("_SHADOWS_SOFT");
         }
 
-        UpdateGrassCache();
+        Vector3Int currentChunk = new Vector3Int(
+            Mathf.FloorToInt(player.position.x / Chunk.ChunkWidth), 0,
+            Mathf.FloorToInt(player.position.z / Chunk.ChunkWidth)
+        );
+        
+        if (currentChunk != lastCheckedChunk)
+        {
+            lastCheckedChunk = currentChunk;
+            UpdateGrassCache();
+        }
         RenderInstanced();
     }
 
@@ -125,7 +142,12 @@ public class GrassBladeManager : MonoBehaviour
             }
         }
         
-        chunkGrassCache[chunkCoord] = matrices;
+        chunkGrassCache[chunkCoord] = new GrassLODData
+        {
+            full = matrices,
+            lod1 = matrices.Where((m, i) => i % 3 == 0).ToList(),
+            lod2 = matrices.Where((m, i) => i % 10 == 0).ToList()
+        };
     }
 
     void RenderInstanced()
@@ -143,7 +165,7 @@ public class GrassBladeManager : MonoBehaviour
         // Chia render thành 2 nhóm: GẦN (có bóng) và XA (không bóng)
         foreach (var kvp in chunkGrassCache)
         {
-            if (kvp.Value.Count == 0) continue;
+            if (kvp.Value.full.Count == 0) continue;
             
             Vector3Int chunkCoord = kvp.Key;
             
@@ -173,27 +195,19 @@ public class GrassBladeManager : MonoBehaviour
             {
                 // LOD 0: Render 100% với bóng
                 mat = grassBladeMaterial;
-                dataToRender = kvp.Value;
+                dataToRender = kvp.Value.full;
             }
             else if (chunkDist <= LOD1_DISTANCE)
             {
                 // LOD 1: Render 33% (bỏ qua 2, lấy 1) không bóng
                 mat = grassMaterialNoShadow;
-                dataToRender = new List<Matrix4x4>();
-                for (int i = 0; i < kvp.Value.Count; i += 3)
-                {
-                    dataToRender.Add(kvp.Value[i]);
-                }
+                dataToRender = kvp.Value.lod1;
             }
             else
             {
                 // LOD 2: Render cực ít 10% (bỏ qua 9, lấy 1) không bóng
                 mat = grassMaterialNoShadow;
-                dataToRender = new List<Matrix4x4>();
-                for (int i = 0; i < kvp.Value.Count; i += 10)
-                {
-                    dataToRender.Add(kvp.Value[i]);
-                }
+                dataToRender = kvp.Value.lod2;
             }
             
             // DrawMeshInstanced giới hạn 1023 instance/lần gọi

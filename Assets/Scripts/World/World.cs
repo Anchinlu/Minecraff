@@ -14,8 +14,8 @@ using System.Collections.Generic;
 public class World : MonoBehaviour
 {
     [Header("Tầm nhìn")]
-    public int viewDistance = 35;      // Đẩy lên mức "Ultra": 35 chunk (560 blocks)
-    public int preloadDistance = 38;   // Preload trước 38 chunk (608 blocks)
+    public int viewDistance = 16;      // Đẩy lên mức "Ultra": 35 chunk (560 blocks) -> Tối ưu: 16
+    public int preloadDistance = 19;   // Preload trước 38 chunk (608 blocks) -> Tối ưu: 19
 
     public Transform player;
 
@@ -360,14 +360,14 @@ public class World : MonoBehaviour
 
         if (chunk.SetBlock(localPos.x, localPos.y, localPos.z, blockType))
         {
-            chunk.CalculateSunlight();
+            chunk.CalculateSunlight(localPos);
             chunk.RebuildMesh();
             
-            if (localPos.x == 0) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.left);
-            else if (localPos.x == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.right);
+            if (localPos.x == 0) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.left, new Vector3Int(Chunk.ChunkWidth - 1, localPos.y, localPos.z));
+            else if (localPos.x == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.right, new Vector3Int(0, localPos.y, localPos.z));
             
-            if (localPos.z == 0) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, -1));
-            else if (localPos.z == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, 1));
+            if (localPos.z == 0) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, -1), new Vector3Int(localPos.x, localPos.y, Chunk.ChunkWidth - 1));
+            else if (localPos.z == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, 1), new Vector3Int(localPos.x, localPos.y, 0));
             
             NotifyBlockUpdate(worldPos);
             NotifyNeighborsUpdate(worldPos);
@@ -391,14 +391,14 @@ public class World : MonoBehaviour
 
         if (changed)
         {
-            chunk.CalculateSunlight();
+            chunk.CalculateSunlight(localPos);
             chunk.RebuildMesh();
             
-            if (localPos.x == 0) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.left);
-            else if (localPos.x == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.right);
+            if (localPos.x == 0) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.left, new Vector3Int(Chunk.ChunkWidth - 1, localPos.y, localPos.z));
+            else if (localPos.x == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + Vector3Int.right, new Vector3Int(0, localPos.y, localPos.z));
             
-            if (localPos.z == 0) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, -1));
-            else if (localPos.z == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, 1));
+            if (localPos.z == 0) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, -1), new Vector3Int(localPos.x, localPos.y, Chunk.ChunkWidth - 1));
+            else if (localPos.z == Chunk.ChunkWidth - 1) UpdateNeighborMeshIfLoaded(chunkCoord + new Vector3Int(0, 0, 1), new Vector3Int(localPos.x, localPos.y, 0));
             
             NotifyBlockUpdate(worldPos);
             NotifyNeighborsUpdate(worldPos);
@@ -428,11 +428,11 @@ public class World : MonoBehaviour
         }
     }
     
-    private void UpdateNeighborMeshIfLoaded(Vector3Int neighborCoord)
+    private void UpdateNeighborMeshIfLoaded(Vector3Int neighborCoord, Vector3Int? boundaryLocalPos = null)
     {
         if (chunks.ContainsKey(neighborCoord))
         {
-            chunks[neighborCoord].CalculateSunlight();
+            chunks[neighborCoord].CalculateSunlight(boundaryLocalPos);
             chunks[neighborCoord].RebuildMesh();
         }
     }
