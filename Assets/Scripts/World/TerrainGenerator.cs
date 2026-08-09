@@ -51,17 +51,27 @@ public class TerrainGenerator
     public int dirtLayerDepth = 3;
 
     // === TÍNH NĂNG MỚI: HỒ & SÔNG ===
-    [Header("Water Table (Hồ)")]
+    [Header("Water Table (Hồ) — ĐÃ SỬA: thêm Rarity Control")]
     public float baseWaterTableY = 30f;
     public float waterTableVariance = 8f;
-    public float waterTableNoiseScale = 0.004f; // càng thấp, hồ càng to và ít
+    public float waterTableNoiseScale = 0.004f;
 
-    [Header("River (Sông/Suối)")]
+    [Header("Lake Rarity — MỚI")]
+    public float lakeRegionNoiseScale = 0.0012f;
+    public float lakeRegionThreshold = 0.72f;
+    public float lakeSizeRarityExponent = 2.5f;
+
+    [Header("River (Sông/Suối) — ĐÃ SỬA: thêm Rarity Control")]
     public float riverWarpStrength = 40f;
     public float riverWarpScale = 0.008f;
     public float riverNoiseScale = 0.006f;
-    public float riverWidth = 0.02f;    // càng nhỏ, sông càng mảnh và hiếm
-    public int riverDepth = 4;          // độ sâu khoét lòng sông
+    public float riverWidth = 0.02f;
+    public int riverDepth = 4;
+
+    [Header("River Rarity — MỚI")]
+    public float riverPresenceNoiseScale = 0.001f;
+    public float riverPresenceThreshold = 0.65f;
+    public float riverWidthRarityExponent = 3f;
 
     /// <summary>
     /// Khởi tạo với seed ngẫu nhiên.
@@ -128,9 +138,22 @@ public class TerrainGenerator
 
     public float GetWaterTableHeight(float x, float z)
     {
-        // Để mặt nước phẳng hoàn toàn như gương, ta sử dụng chung một mực nước ngầm (Sea Level).
-        // Không dùng Perlin Noise ở đây vì nó sẽ làm mặt nước lồi lõm như đồi núi!
-        return baseWaterTableY;
+        // BƯỚC 1: Mask vùng — quyết định nơi này có được phép có hồ không
+        float regionNoise = Mathf.PerlinNoise(x * lakeRegionNoiseScale, z * lakeRegionNoiseScale);
+        float lakeMask = Mathf.Clamp01((regionNoise - lakeRegionThreshold) / (1f - lakeRegionThreshold));
+
+        if (lakeMask <= 0f)
+        {
+            // Vùng KHÔNG được phép có hồ — trả về giá trị cực thấp, không bao giờ giao với terrain thật
+            return -1000f;
+        }
+
+        // BƯỚC 2: Trong vùng được phép, tính kích thước — dùng Pow() để bias về phía nhỏ
+        float sizeNoise = Mathf.PerlinNoise(x * waterTableNoiseScale, z * waterTableNoiseScale);
+        float biasedSize = Mathf.Pow(sizeNoise, lakeSizeRarityExponent); // mũ cao → phần lớn kết quả nhỏ, hiếm khi gần 1 (to)
+
+        // Nhân thêm lakeMask để hồ ở rìa vùng mask (lakeMask gần 0) nhỏ dần, mượt mà không cắt cụt đột ngột
+        return baseWaterTableY + biasedSize * waterTableVariance * lakeMask;
     }
 
     public float GetRiverMask(float x, float z)
@@ -143,13 +166,27 @@ public class TerrainGenerator
         return Mathf.Abs(riverNoise - 0.5f); // gần 0 = giữa lòng sông
     }
 
+    public float GetRiverPresenceMask(float x, float z)
+    {
+        float presenceNoise = Mathf.PerlinNoise(x * riverPresenceNoiseScale + 500f, z * riverPresenceNoiseScale + 500f);
+        return Mathf.Clamp01((presenceNoise - riverPresenceThreshold) / (1f - riverPresenceThreshold));
+    }
+
     public void CarveRiver(int worldX, int worldZ, ref int terrainHeight)
     {
-        float riverDist = GetRiverMask(worldX, worldZ);
-        if (riverDist < riverWidth)
+        float presenceMask = GetRiverPresenceMask(worldX, worldZ);
+        if (presenceMask <= 0f) return; // Khu vực này KHÔNG có sông — bỏ qua hoàn toàn, tiết kiệm tính toán luôn
+
+        float riverDist = GetRiverMask(worldX, worldZ); // hàm cũ, giữ nguyên (Domain Warping)
+
+        // Độ rộng thực tế = riverWidth cơ bản × hệ số hiếm theo presenceMask
+        // presenceMask càng cao (sâu trong vùng "có sông"), sông càng CÓ THỂ rộng hơn — nhưng vẫn qua Pow() để hiếm
+        float widthFactor = Mathf.Pow(presenceMask, riverWidthRarityExponent);
+        float actualRiverWidth = riverWidth * Mathf.Lerp(0.4f, 1.5f, widthFactor); // dao động 40%-150% độ rộng gốc
+
+        if (riverDist < actualRiverWidth)
         {
-            // SmoothStep để bờ sông thoải dần, không dựng đứng như hào nước
-            float carveFactor = 1f - Mathf.SmoothStep(0f, riverWidth, riverDist);
+            float carveFactor = 1f - Mathf.SmoothStep(0f, actualRiverWidth, riverDist);
             terrainHeight -= Mathf.RoundToInt(carveFactor * riverDepth);
         }
     }
